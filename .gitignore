@@ -1,0 +1,41 @@
+node_modules/
+.next/
+out/
+build/
+dist/
+
+# Secretos
+.env
+.env.local
+.env.*.local
+secrets/
+*.pem
+*.key
+
+# Datos locales
+#
+# La barra inicial ancla la regla a la RAÍZ. El starter no versiona ninguna
+# imagen de catálogo: las subidas del panel (productos, campañas, etc.) viven
+# en el volumen de UPLOADS_DIR — ./uploads en desarrollo local, o
+# /opt/tiendas/<tienda>/uploads en el servidor —, nunca en public/ ni en git.
+/uploads/
+postgres-data/
+
+.DS_Store
+*.log
+npm-debug.log*
+.pnpm-debug.log*
+
+coverage/
+.turbo/
+next-env.d.ts
+*.tsbuildinfo
+
+# Bundle de lib/db/seed.ts y scripts/crear-admin.ts para producción
+# (pnpm herramientas). El build lo genera; no se versiona.
+herramientas/
+
+# Variables locales de scripts/subir.sh (VPS, TIENDA, DOMINIO...). Nunca
+# entra a git: son datos de despliegue de esta máquina, no del proyecto.
+.subir.env
+

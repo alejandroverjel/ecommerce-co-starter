@@ -1,0 +1,34 @@
+# Qué NO entra al contexto del build.
+#
+# Sin este archivo el build de la imagen mentía: copiaba .env.local y los
+# node_modules de la máquina de desarrollo, así que compilaba con una
+# DATABASE_URL que en CI no existe y con binarios nativos de otra plataforma.
+# El build local pasaba y el de GitHub Actions fallaba, que es la peor forma
+# de enterarse.
+
+# Dependencias y artefactos: se instalan y generan dentro de la imagen.
+node_modules
+.next
+out
+build
+
+# Secretos: NUNCA en una imagen. Las variables llegan por env_file en runtime.
+.env
+.env.*
+!env.example
+
+# Control de versiones e historial.
+.git
+.gitignore
+
+# Herramientas de desarrollo que no aportan nada al runtime.
+.claude
+.vscode
+.idea
+*.log
+.DS_Store
+
+# Pruebas y documentación: no se ejecutan en producción.
+pruebas
+*.md
+!README.md

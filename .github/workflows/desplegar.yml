@@ -1,0 +1,181 @@
+# ==============================================================================
+# Construye la imagen y la publica en ghcr.io
+#
+# El VPS no compila nada: un timer de systemd ejecuta `deploy.sh`, que descarga
+# la imagen ya construida, la levanta, espera al healthcheck y purga la caché
+# de Cloudflare. Aquí solo se produce esa imagen.
+#
+# El despliegue NO se dispara desde aquí. GitHub no tiene acceso al VPS —ni
+# debe tenerlo—: el servidor va a buscar la imagen, no al revés. Así no hay
+# ninguna credencial de SSH guardada en GitHub.
+# ==============================================================================
+
+name: Construir y publicar imagen
+
+on:
+  push:
+    branches: [main]
+  # Permite lanzarlo a mano desde la pestaña Actions, sin tener que hacer un
+  # commit vacío para reintentar un build que falló por algo externo.
+  workflow_dispatch:
+
+env:
+  REGISTRO: ghcr.io
+  IMAGEN: ${{ github.repository }}
+
+jobs:
+  pruebas:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Traer el código
+        uses: actions/checkout@v4
+
+      # Verificaciones antes de construir: una imagen que no compila o que no
+      # pasa el typecheck no debería llegar nunca al registro.
+      - name: Preparar pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Preparar Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Instalar dependencias
+        run: pnpm install --frozen-lockfile
+
+      - name: Comprobar tipos
+        run: pnpm typecheck
+
+      - name: Lint
+        run: pnpm lint
+
+      # Postgres real para las pruebas de integración: las funciones que
+      # sostienen el dinero son plpgsql, y simularlas no probaría nada.
+      - name: Levantar Postgres
+        run: |
+          docker run -d --name pg-ci \
+            -e POSTGRES_USER=tienda \
+            -e POSTGRES_PASSWORD=ci \
+            -e POSTGRES_DB=tienda \
+            -p 5432:5432 \
+            postgres:16-alpine
+          # `pg_isready` NO basta: durante initdb, Postgres arranca un servidor
+          # temporal que ya responde y se apaga justo después. Si las
+          # migraciones entran en esa ventana, mueren con "the database system
+          # is shutting down". Hay que esperar al segundo "ready" del log, que
+          # es el definitivo.
+          for i in $(seq 1 60); do
+            listos=$(docker logs pg-ci 2>&1 | grep -c "ready to accept connections" || true)
+            [ "${listos:-0}" -ge 2 ] && break
+            sleep 1
+          done
+          sleep 2
+          docker exec pg-ci pg_isready -U tienda -d tienda
+
+      - name: Aplicar migraciones y semilla
+        env:
+          DATABASE_URL: postgresql://tienda:ci@localhost:5432/tienda
+        run: |
+          for f in drizzle/migrations/*.sql; do
+            echo "-- $f"
+            sed 's/--> statement-breakpoint//' "$f" \
+              | docker exec -i pg-ci psql -U tienda -d tienda -v ON_ERROR_STOP=1 -q
+          done
+          pnpm db:seed
+
+      # Generado en el job, no un literal: un secreto fijo en el repositorio,
+      # aunque solo se use en CI, es un hábito que tarde o temprano se copia
+      # a un entorno que sí importa.
+      - name: Generar AUTH_SECRET de CI
+        run: echo "AUTH_SECRET=$(openssl rand -base64 32)" >> "$GITHUB_ENV"
+
+      - name: Pruebas
+        env:
+          DATABASE_URL: postgresql://tienda:ci@localhost:5432/tienda
+        run: pnpm test
+
+  construir:
+    needs: pruebas
+    runs-on: ubuntu-latest
+    # El repo del starter corre las pruebas de arriba pero no publica imagen:
+    # no hay una tienda real detrás de él para desplegar.
+    if: ${{ !endsWith(github.repository, '/ecommerce-co-starter') }}
+
+    permissions:
+      contents: read
+      # Necesario para empujar a ghcr.io con el GITHUB_TOKEN automático. Sin
+      # esto no hace falta crear ningún token personal para publicar.
+      packages: write
+
+    steps:
+      - name: Traer el código
+        uses: actions/checkout@v4
+
+      # NEXT_PUBLIC_SITE_URL se hornea en el bundle del build: si falla mal
+      # configurada, el sitio publicado queda con el dominio equivocado (o
+      # vacío) horneado en cada página, y no se nota hasta producción.
+      - name: Comprobar NEXT_PUBLIC_SITE_URL
+        run: |
+          url="${{ vars.NEXT_PUBLIC_SITE_URL }}"
+          if [[ -z "$url" ]]; then
+            echo "::error::Falta la variable de repositorio NEXT_PUBLIC_SITE_URL." >&2
+            exit 1
+          fi
+          if [[ "$url" != https://* ]]; then
+            echo "::error::NEXT_PUBLIC_SITE_URL debe empezar por https://" >&2
+            exit 1
+          fi
+          if [[ "$url" == *localhost* ]]; then
+            echo "::error::NEXT_PUBLIC_SITE_URL no puede contener localhost." >&2
+            exit 1
+          fi
+
+      - name: Preparar Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Entrar al registro
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRO }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Calcular etiquetas
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRO }}/${{ env.IMAGEN }}
+          tags: |
+            type=raw,value=latest
+            type=sha,format=long
+
+      - name: Construir y publicar
+        id: construir
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          # Caché entre ejecuciones: sin esto cada build reinstala y recompila
+          # todo desde cero.
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            NEXT_PUBLIC_SITE_URL=${{ vars.NEXT_PUBLIC_SITE_URL }}
+            NEXT_PUBLIC_GA_ID=${{ vars.NEXT_PUBLIC_GA_ID }}
+            NEXT_PUBLIC_GTM_ID=${{ vars.NEXT_PUBLIC_GTM_ID }}
+            NEXT_PUBLIC_GOOGLE_SITE_VERIFICATION=${{ vars.NEXT_PUBLIC_GOOGLE_SITE_VERIFICATION }}
+
+      # El digest identifica la imagen exacta. `deploy.sh --revertir` vuelve por
+      # digest, no por tag, así que tenerlo a la vista en el log ahorra buscarlo
+      # en el registro cuando hay que revertir con prisa.
+      - name: Resumen
+        run: |
+          echo "### Imagen publicada" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          echo "${{ steps.meta.outputs.tags }}" >> "$GITHUB_STEP_SUMMARY"
+          echo "digest: ${{ steps.construir.outputs.digest }}" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"

@@ -1,0 +1,36 @@
+-- ============================================================================
+-- Pasarela 'manual': cobros que no pasan por ninguna pasarela
+--
+-- POR QUE HACE FALTA
+--
+-- Buena parte de las ventas de esta tienda se cobran fuera de linea: efectivo
+-- que entrega el mensajero, una transferencia, un Nequi. Hoy no hay forma de
+-- dejar eso escrito: `payments` exige un `payment_gateway`, y los tres valores
+-- que existen son pasarelas reales.
+--
+-- LO QUE SE DESCARTO Y POR QUE
+--
+--  a) Marcar el pedido como 'pagado' sin fila en `payments`. Rompe el
+--     invariante que 0004 defendio a costa de tres reescrituras: "ningun
+--     pedido pasa a pagado sin una fila de cobro aprobada SUYA". Ademas deja
+--     la contabilidad coja: sum(payments) < sum(pedidos pagados), y nadie
+--     puede decir cuanta plata entro ni por donde.
+--
+--  b) Reutilizar 'wompi' con un external_id inventado. Envenena la
+--     conciliacion: al cruzar contra el extracto de Wompi aparecen
+--     transacciones que Wompi nunca vio.
+--
+-- Un valor propio en el enum es lo unico que deja el cobro registrado, sumable
+-- con los demas y distinguible de un cobro de pasarela con un `where gateway`.
+--
+-- El resto del camino NO se duplica: el panel registra el cobro llamando a
+-- `fulfill_paid_order` con gateway 'manual', asi que hereda tal cual la
+-- idempotencia por (gateway, external_id), el orden de bloqueo, la marca
+-- `stock_descontado_at` —el inventario se descuenta UNA vez, la misma que con
+-- Wompi— y el rastro en `payment_events`.
+--
+-- `add value if not exists` es idempotente. No se usa el valor nuevo en esta
+-- misma transaccion, que es lo unico que Postgres 12+ prohibe.
+-- ============================================================================
+
+alter type public.payment_gateway add value if not exists 'manual';

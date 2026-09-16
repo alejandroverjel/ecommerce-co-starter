@@ -1,0 +1,192 @@
+# ==============================================================================
+# Tienda parametrizada por TIENDA, DOMINIO e IMAGEN (variables de entorno,
+# ver /opt/tiendas/<tienda>/.env en el VPS).
+#
+# Instancia completamente aislada. Su propia app y su propio Postgres, en una
+# red privada que ninguna otra tienda puede alcanzar.
+#
+# Solo el contenedor de la app entra en traefik-public. La base de datos vive
+# exclusivamente en la red privada de esta tienda y nunca publica puerto.
+# ==============================================================================
+
+services:
+
+  # ----------------------------------------------------------------------------
+  # APLICACIÓN
+  # ----------------------------------------------------------------------------
+  app:
+    image: ${IMAGEN:?}
+    container_name: ${TIENDA:?}-app
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    # Opcional solo para que `docker compose config` valide en un checkout
+    # limpio. En el VPS el .env es obligatorio: sin él la app arranca sin
+    # DATABASE_URL, /api/salud falla y el healthcheck frena el deploy.
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      NODE_ENV: production
+      # Next.js en modo standalone escucha aquí.
+      PORT: "3000"
+      HOSTNAME: "0.0.0.0"
+      TZ: America/Bogota
+    volumes:
+      # Imágenes de producto. Se respalda junto con la base de datos.
+      - ./uploads:/data/uploads:z
+      # Caché del optimizador de imágenes (las variantes WebP ya codificadas).
+      # Sin este mount vivía dentro del contenedor y cada deploy lo tiraba:
+      # el sitio entraba en una tormenta de recodificación justo después de
+      # publicar, con TTFB de segundos en cada foto fría.
+      - ./cache-imagenes:/app/.next/cache/images:z
+    networks:
+      - traefik-public
+      - privada
+    labels:
+      - traefik.enable=true
+      # Solo se declara el servicio en la red pública; si Traefik intentara
+      # usar la red privada no podría alcanzar el contenedor.
+      - traefik.docker.network=traefik-public
+
+      - traefik.http.routers.${TIENDA:?}.rule=Host(`${DOMINIO:?}`) || Host(`www.${DOMINIO:?}`)
+      - traefik.http.routers.${TIENDA:?}.entrypoints=websecure
+      - traefik.http.routers.${TIENDA:?}.tls.certresolver=letsencrypt
+      - traefik.http.services.${TIENDA:?}.loadbalancer.server.port=3000
+
+      # Rutas sensibles con límite de peticiones más estricto.
+      # Cubre AMBOS hosts (antes solo el ápex: por www se saltaba el límite) e
+      # incluye login y registro, que son POST a /entrar y /crear-cuenta —no a
+      # /api— y por tanto quedaban sin límite frente a credential stuffing.
+      # Traefik v3 no acepta Host(a,b): cada dominio va en su propio Host()
+      # unido con ||. Con la forma de dos parámetros el router entero se
+      # descartaba y las rutas sensibles se quedaban SIN límite de peticiones.
+      - traefik.http.routers.${TIENDA:?}-sensible.rule=(Host(`${DOMINIO:?}`) || Host(`www.${DOMINIO:?}`)) && (PathPrefix(`/api`) || PathPrefix(`/finalizar-compra`) || PathPrefix(`/mi-cuenta`) || PathPrefix(`/entrar`) || PathPrefix(`/crear-cuenta`))
+      - traefik.http.routers.${TIENDA:?}-sensible.entrypoints=websecure
+      - traefik.http.routers.${TIENDA:?}-sensible.tls.certresolver=letsencrypt
+      - traefik.http.routers.${TIENDA:?}-sensible.priority=100
+      - traefik.http.routers.${TIENDA:?}-sensible.middlewares=ratelimit-estricto@file
+      - traefik.http.routers.${TIENDA:?}-sensible.service=${TIENDA:?}
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/salud/').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 40s
+    deploy:
+      resources:
+        limits:
+          # 2 CPUs: el host tiene 4 casi ociosas y con 1 sola la codificación
+          # de una imagen fría bloqueaba el render de la página que la pedía.
+          cpus: "2.0"
+          memory: 768M
+        reservations:
+          memory: 256M
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+  # ----------------------------------------------------------------------------
+  # BASE DE DATOS
+  #
+  # Exclusiva de esta tienda. No publica puerto al host ni entra en
+  # traefik-public. Solo la app de esta tienda puede alcanzarla.
+  # ----------------------------------------------------------------------------
+  postgres:
+    image: postgres:16-alpine
+    container_name: ${TIENDA:?}-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${TIENDA:?}
+      POSTGRES_USER: ${TIENDA:?}
+      POSTGRES_PASSWORD_FILE: /run/secrets/db_password
+      # Checksums de datos: detecta corrupción silenciosa en disco.
+      # Solo se puede activar al inicializar el cluster, no después.
+      POSTGRES_INITDB_ARGS: "--data-checksums"
+      TZ: America/Bogota
+    secrets:
+      - db_password
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      - privada
+    healthcheck:
+      # Consulta real ejecutada como el usuario correcto.
+      # `pg_isready` como root falla por autenticación peer y da un falso
+      # negativo mientras ensucia el log con errores.
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\" -q && psql -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\" -qtAXc 'SELECT 1' >/dev/null"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    # Margen para que Postgres cierre limpio y haga checkpoint.
+    stop_grace_period: 60s
+    command:
+      - postgres
+      # Ajuste para ~250MB de memoria y una tienda pequeña.
+      - -c
+      - shared_buffers=128MB
+      - -c
+      - effective_cache_size=384MB
+      - -c
+      - work_mem=4MB
+      - -c
+      - maintenance_work_mem=64MB
+      - -c
+      - max_connections=50
+      # Registrar consultas lentas para diagnóstico.
+      - -c
+      - log_min_duration_statement=500
+      # NO se usa log_statement=ddl: registraría los CREATE ROLE y ALTER ROLE
+      # con las contraseñas en texto plano dentro del log.
+      - -c
+      - log_statement=none
+      - -c
+      - log_connections=off
+      - -c
+      - log_disconnections=off
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 512M
+        reservations:
+          memory: 128M
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+# ==============================================================================
+secrets:
+  db_password:
+    file: ./secrets/db_password.txt
+
+volumes:
+  postgres-data:
+    name: ${TIENDA:?}-postgres-data
+
+# ==============================================================================
+# REDES
+#
+# traefik-public : compartida. Solo entra la app, nunca la base de datos.
+# privada        : exclusiva de esta tienda. Se crea con el prefijo del
+#                  proyecto, así que ninguna otra tienda puede unirse por
+#                  accidente. internal: true la deja sin salida a internet.
+# ==============================================================================
+networks:
+  traefik-public:
+    name: traefik-public
+    external: true
+
+  privada:
+    name: ${TIENDA:?}-privada
+    internal: true

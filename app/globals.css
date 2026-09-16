@@ -1,0 +1,262 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+/* Variante de dark mode por clase, no por preferencia del sistema: sin un
+   interruptor que ponga <html class="dark">, este bloque nunca se activa
+   solo. La usan los `dark:` de los componentes de shadcn/ui de abajo. */
+@custom-variant dark (&:is(.dark *));
+
+/* ==========================================================================
+   Sistema de diseño — tema shadcn/ui por defecto, base color "neutral".
+
+   Punto de partida neutro, sin identidad de marca: cada tienda nueva pone su
+   color en tienda.config.ts (seo.colorTema) y, si hace falta más que eso,
+   reemplaza los tokens de abajo.
+
+   PROHIBIDO reintroducir en este archivo o en componentes tokens de color,
+   clases decorativas, fuentes o hex propios de una marca concreta (la lista
+   está en docs/DEUDA-TECNICA.md). Si algo así reaparece, es que se copió una
+   identidad de marca en vez de configurarla.
+   ========================================================================== */
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --font-sans: var(--font-sans);
+  /* CardTitle (shadcn) usa font-heading; sin marca propia, es la misma pila. */
+  --font-heading: var(--font-sans);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  /* Radios grandes que usan algunos componentes de shadcn (p. ej. el
+     rounded-4xl del badge, pensado como píldora). Tailwind no los trae por
+     defecto: sin esto, esas clases no generan ninguna regla. */
+  --radius-2xl: calc(var(--radius) * 1.8);
+  --radius-3xl: calc(var(--radius) * 2.2);
+  --radius-4xl: calc(var(--radius) * 2.6);
+}
+
+:root {
+  --radius: 0.5rem;
+
+  --background: oklch(1 0 0);
+  --foreground: oklch(0.145 0 0);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.145 0 0);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.145 0 0);
+  --primary: oklch(0.205 0 0);
+  --primary-foreground: oklch(0.985 0 0);
+  --secondary: oklch(0.97 0 0);
+  --secondary-foreground: oklch(0.205 0 0);
+  --muted: oklch(0.97 0 0);
+  --muted-foreground: oklch(0.556 0 0);
+  --accent: oklch(0.97 0 0);
+  --accent-foreground: oklch(0.205 0 0);
+  --destructive: oklch(0.577 0.245 27.325);
+  --destructive-foreground: oklch(0.985 0 0);
+  --border: oklch(0.922 0 0);
+  --input: oklch(0.922 0 0);
+  --ring: oklch(0.708 0 0);
+
+  /* ---- Fuente: pila del sistema. Sin next/font ni archivos propios: el
+     build no depende de la red y no hay precargas que mantener. ---- */
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+    sans-serif;
+
+  /* ==========================================================================
+     Capa de alias — nombres semánticos que usan ~60 archivos.
+
+     Se definen UNA sola vez, apuntando a los tokens de shadcn de arriba: al
+     resolverse en el elemento donde se usan, siguen el valor que gane la
+     cascada ahí (:root o .dark), sin necesidad de repetirlos en .dark.
+     ========================================================================== */
+  --fondo: var(--background);
+  --fondo-elevado: var(--card);
+  --fondo-hondo: var(--muted);
+  --borde: var(--border);
+  --borde-fuerte: var(--input);
+  --texto: var(--foreground);
+  --texto-suave: var(--muted-foreground);
+  --texto-tenue: var(--muted-foreground);
+  --acento: var(--primary);
+  --acento-texto: var(--primary-foreground);
+  --acento-hover: color-mix(in srgb, var(--primary) 90%, black);
+  --disponible: oklch(0.6 0.15 145);
+  --exito: oklch(0.6 0.15 145);
+  --aviso: oklch(0.75 0.15 70);
+  --peligro: var(--destructive);
+  --peligro-fondo: color-mix(in srgb, var(--destructive) 8%, transparent);
+  --peligro-borde: color-mix(in srgb, var(--destructive) 35%, transparent);
+  --sombra-tarjeta: 0 1px 2px rgb(0 0 0 / 0.05), 0 8px 24px rgb(0 0 0 / 0.09);
+  --sombra-levanta: 0 2px 4px rgb(0 0 0 / 0.05), 0 12px 28px rgb(0 0 0 / 0.1);
+  --radius-tarjeta: var(--radius);
+  --radius-boton: calc(var(--radius) - 2px);
+}
+
+/* ==========================================================================
+   Modo oscuro.
+
+   Los tokens quedan definidos para cuando haga falta, pero HOY no hay
+   interruptor: se retiró la librería de temas (ver deuda técnica). Sin un
+   `<html class="dark">` real, este bloque no se activa solo.
+   ========================================================================== */
+.dark {
+  --background: oklch(0.145 0 0);
+  --foreground: oklch(0.985 0 0);
+  --card: oklch(0.205 0 0);
+  --card-foreground: oklch(0.985 0 0);
+  --popover: oklch(0.205 0 0);
+  --popover-foreground: oklch(0.985 0 0);
+  --primary: oklch(0.922 0 0);
+  --primary-foreground: oklch(0.205 0 0);
+  --secondary: oklch(0.269 0 0);
+  --secondary-foreground: oklch(0.985 0 0);
+  --muted: oklch(0.269 0 0);
+  --muted-foreground: oklch(0.708 0 0);
+  --accent: oklch(0.269 0 0);
+  --accent-foreground: oklch(0.985 0 0);
+  --destructive: oklch(0.704 0.191 22.216);
+  --destructive-foreground: oklch(0.985 0 0);
+  --border: oklch(1 0 0 / 10%);
+  --input: oklch(1 0 0 / 15%);
+  --ring: oklch(0.556 0 0);
+}
+
+/* ==========================================================================
+   Base
+   ========================================================================== */
+
+* {
+  border-color: var(--borde);
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  background-color: var(--fondo);
+  color: var(--texto);
+  font-family: var(--font-sans);
+}
+
+:focus-visible {
+  outline: 2px solid var(--texto);
+  outline-offset: 3px;
+  border-radius: 4px;
+}
+
+/* ==========================================================================
+   Utilidades neutras
+   ========================================================================== */
+
+/* Titular con un poco más de peso y tracking. Sin fuente propia ni ejes
+   variables: es tipografía del sistema, no una identidad de marca. */
+.display {
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+/* Tarjeta y bloque de contenido. Sin rotación ni sombra teñida de marca. */
+.tarjeta,
+.bloque {
+  background: var(--fondo-elevado);
+  border: 1px solid var(--borde);
+  border-radius: var(--radius-tarjeta);
+}
+
+/* Cifras (precio y cantidad): tabulares, sin color de marca fijo. */
+.cifra,
+.precio {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
+.titulo-producto {
+  font-weight: 500;
+}
+
+/* Recorta a N líneas. Las descripciones de producto vienen con longitudes
+   muy dispares. */
+.lineas-2 {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.lineas-3 {
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* Contenido solo para lectores de pantalla. */
+.solo-lectores {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border-width: 0;
+}
+
+/* ==========================================================================
+   Movimiento — solo lo funcional.
+
+   Sin animaciones decorativas: nada de hero, adornos ni textos en movimiento. Las
+   únicas transiciones que quedan son las del panel del carrito (telón y
+   entrada desde la derecha).
+   ========================================================================== */
+
+@keyframes aparecer {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes entrar-derecha {
+  from {
+    transform: translateX(100%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
