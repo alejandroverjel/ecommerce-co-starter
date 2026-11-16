@@ -1,6 +1,12 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "extends": [
-    "config:recommended"
+  "description": "App fuera de Cloudflare Pages (VPS): Renovate abre los PR pero ninguno se fusiona solo, porque fusionar a main puede desplegar.",
+  "extends": ["local>alejandroverjel/renovate-config"],
+  "packageRules": [
+    {
+      "description": "Anula el automerge de menores del preset común",
+      "matchUpdateTypes": ["minor", "patch", "pin", "digest"],
+      "automerge": false
+    }
   ]
 }
